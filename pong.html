@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
+  <title>Simple Pong (Touch + Buttons)</title>
+  <style>
+    body{
+      margin:0;
+      background:#0b0f14;
+      color:#e8eef5;
+      font-family:system-ui, Arial, sans-serif;
+      display:grid;
+      place-items:center;
+      min-height:100vh;
+      overscroll-behavior:none;
+      touch-action:none;
+    }
+    .wrap{ width:min(920px, 96vw); text-align:center; }
+    canvas{
+      width:100%;
+      max-width:920px;
+      height:auto;
+      border-radius:12px;
+      background:#05070a;
+      box-shadow:0 12px 30px rgba(0,0,0,0.35);
+      display:block;
+      margin:12px auto;
+      touch-action:none;
+    }
+    .hint{ opacity:.85; font-size:14px; line-height:1.4; }
+    .controls{
+      display:flex;
+      gap:10px;
+      justify-content:center;
+      align-items:center;
+      flex-wrap:wrap;
+      margin:8px 0 0;
+    }
+    button{
+      appearance:none;
+      border:none;
+      border-radius:12px;
+      padding:10px 14px;
+      font-weight:700;
+      font-size:14px;
+      color:#e8eef5;
+      background:rgba(255,255,255,0.10);
+      border:1px solid rgba(255,255,255,0.14);
+      box-shadow:0 8px 18px rgba(0,0,0,0.25);
+      cursor:pointer;
+    }
+    button:active{ transform:translateY(1px); }
+    .pill{
+      display:inline-block;
+      padding:2px 8px;
+      border-radius:999px;
+      background:rgba(255,255,255,0.08);
+      border:1px solid rgba(255,255,255,0.12);
+      font-size:12px;
+      opacity:.9;
+    }
+    .overlay {
+      position: relative;
+      width: 100%;
+      max-width: 920px;
+      margin: 0 auto;
+    }
+    .statusBar{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:10px;
+      opacity:.9;
+      font-size:13px;
+      margin-top:8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h2>Simple Pong 🏓 (Touch + Pause/Restart)</h2>
+
+    <div class="hint">
+      Mobile: drag your finger to move paddle • Desktop: W/S • Restart: R
+    </div>
+
+    <div class="controls">
+      <button id="pauseBtn">⏸ Pause</button>
+      <button id="restartBtn">🔄 Restart</button>
+    </div>
+
+    <div class="statusBar">
+      <span class="pill" id="modePill">Playing</span>
+      <span class="pill">First to 5 wins</span>
+    </div>
+
+    <canvas id="game" width="920" height="520"></canvas>
+
+    <div class="hint">Tip: If the AI wins, it’s not cheating… it’s “machine learning.” 😌</div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+
+    const pauseBtn = document.getElementById("pauseBtn");
+    const restartBtn = document.getElementById("restartBtn");
+    const modePill = document.getElementById("modePill");
+
+    const W = canvas.width;
+    const H = canvas.height;
+
+    const paddleW = 14;
+    const paddleH = 110;
+    const paddleSpeed = 7;
+
+    const ballSize = 12;
+    const winScore = 5;
+
+    const state = {
+      keys: new Set(),
+      over: false,
+      paused: false,
+      winnerText: "",
+      leftScore: 0,
+      rightScore: 0,
+      left: { x: 30, y: (H - paddleH) / 2 },
+      right: { x: W - 30 - paddleW, y: (H - paddleH) / 2 },
+      ball: { x: W / 2, y: H / 2, vx: 6, vy: 3 },
+      isTouching: false,
+      touchOffsetY: 0
+    };
+
+    function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+    function rectsOverlap(ax, ay, aw, ah, bx, by, bw, bh) {
+      return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+    }
+
+    function resetBall(direction = 1) {
+      state.ball.x = W / 2;
+      state.ball.y = H / 2;
+      const jitter = (Math.random() * 2 - 1) * 1.2;
+      state.ball.vx = (6 + Math.random() * 1.5) * direction;
+      state.ball.vy = (3 + jitter);
+    }
+
+    function resetGame() {
+      state.over = false;
+      state.paused = false;
+      state.winnerText = "";
+      state.leftScore = 0;
+      state.rightScore = 0;
+      state.left.y = (H - paddleH) / 2;
+      state.right.y = (H - paddleH) / 2;
+      modePill.textContent = "Playing";
+      pauseBtn.textContent = "⏸ Pause";
+      resetBall(Math.random() < 0.5 ? 1 : -1);
+    }
+
+    function setPaused(p) {
+      if (state.over) return;
+      state.paused = p;
+      modePill.textContent = p ? "Paused" : "Playing";
+      pauseBtn.textContent = p ? "▶ Resume" : "⏸ Pause";
+    }
+
+    pauseBtn.addEventListener("click", () => setPaused(!state.paused));
+    restartBtn.addEventListener("click", () => resetGame());
+
+    // Keyboard
+    window.addEventListener("keydown", (e) => {
+      const k = e.key.toLowerCase();
+      state.keys.add(k);
+      if (k === "r") resetGame();
+      if (k === "p") setPaused(!state.paused);
+    });
+    window.addEventListener("keyup", (e) => state.keys.delete(e.key.toLowerCase()));
+
+    // Touch / pointer helpers
+    function getCanvasY(clientY) {
+      const rect = canvas.getBoundingClientRect();
+      const scaleY = H / rect.height;
+      return (clientY - rect.top) * scaleY;
+    }
+
+    function handleTouchStart(clientY) {
+      state.isTouching = true;
+      const y = getCanvasY(clientY);
+      state.touchOffsetY = y - state.left.y;
+    }
+
+    function handleTouchMove(clientY) {
+      if (!state.isTouching) return;
+      const y = getCanvasY(clientY);
+      state.left.y = clamp(y - state.touchOffsetY, 0, H - paddleH);
+    }
+
+    function handleTouchEnd() { state.isTouching = false; }
+
+    canvas.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      // On mobile, tapping canvas while paused can resume (nice UX)
+      if (state.paused && !state.over) setPaused(false);
+
+      canvas.setPointerCapture(e.pointerId);
+      handleTouchStart(e.clientY);
+    });
+
+    canvas.addEventListener("pointermove", (e) => {
+      e.preventDefault();
+      handleTouchMove(e.clientY);
+    });
+
+    canvas.addEventListener("pointerup", (e) => { e.preventDefault(); handleTouchEnd(); });
+    canvas.addEventListener("pointercancel", (e) => { e.preventDefault(); handleTouchEnd(); });
+
+    // Prevent page scroll during play
+    document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+
+    function update() {
+      if (state.over || state.paused) return;
+
+      // Keyboard paddle (only when not touching)
+      if (!state.isTouching) {
+        let move = 0;
+        if (state.keys.has("w")) move -= paddleSpeed;
+        if (state.keys.has("s")) move += paddleSpeed;
+        state.left.y = clamp(state.left.y + move, 0, H - paddleH);
+      }
+
+      // AI paddle
+      const aiTarget = state.ball.y - paddleH / 2 + ballSize / 2;
+      const aiSpeed = 5.2;
+      const delta = aiTarget - state.right.y;
+      state.right.y = clamp(state.right.y + clamp(delta, -aiSpeed, aiSpeed), 0, H - paddleH);
+
+      // Ball movement
+      const ball = state.ball;
+      ball.x += ball.vx;
+      ball.y += ball.vy;
+
+      // Wall bounce
+      if (ball.y <= 0) { ball.y = 0; ball.vy *= -1; }
+      else if (ball.y + ballSize >= H) { ball.y = H - ballSize; ball.vy *= -1; }
+
+      // Paddle collisions
+      if (rectsOverlap(ball.x, ball.y, ballSize, ballSize, state.left.x, state.left.y, paddleW, paddleH)) {
+        ball.x = state.left.x + paddleW;
+        ball.vx = Math.abs(ball.vx) + 0.35;
+        const hit = (ball.y + ballSize / 2) - (state.left.y + paddleH / 2);
+        ball.vy = hit * 0.08;
+      }
+
+      if (rectsOverlap(ball.x, ball.y, ballSize, ballSize, state.right.x, state.right.y, paddleW, paddleH)) {
+        ball.x = state.right.x - ballSize;
+        ball.vx = -(Math.abs(ball.vx) + 0.35);
+        const hit = (ball.y + ballSize / 2) - (state.right.y + paddleH / 2);
+        ball.vy = hit * 0.08;
+      }
+
+      // Scoring
+      if (ball.x + ballSize < 0) {
+        state.rightScore += 1;
+        resetBall(-1);
+      } else if (ball.x > W) {
+        state.leftScore += 1;
+        resetBall(1);
+      }
+
+      // Win condition
+      if (state.leftScore >= winScore) {
+        state.over = true;
+        state.winnerText = "You win! 🏆";
+        modePill.textContent = "Game Over";
+      } else if (state.rightScore >= winScore) {
+        state.over = true;
+        state.winnerText = "AI wins! 🤖";
+        modePill.textContent = "Game Over";
+      }
+    }
+
+    function drawNet() {
+      ctx.save();
+      ctx.globalAlpha = 0.35;
+      const segH = 14, gap = 10;
+      for (let y = 0; y < H; y += segH + gap) ctx.fillRect(W / 2 - 2, y, 4, segH);
+      ctx.restore();
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+
+      // Net + objects
+      ctx.fillStyle = "#e8eef5";
+      drawNet();
+
+      ctx.fillRect(state.left.x, state.left.y, paddleW, paddleH);
+      ctx.fillRect(state.right.x, state.right.y, paddleW, paddleH);
+      ctx.fillRect(state.ball.x, state.ball.y, ballSize, ballSize);
+
+      // Score
+      ctx.font = "bold 42px system-ui, Arial";
+      ctx.textAlign = "center";
+      ctx.fillText(state.leftScore, W * 0.25, 62);
+      ctx.fillText(state.rightScore, W * 0.75, 62);
+
+      // Overlay for paused / game over
+      if (state.paused || state.over) {
+        ctx.save();
+        ctx.globalAlpha = 0.72;
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, W, H);
+        ctx.restore();
+
+        ctx.fillStyle = "#e8eef5";
+        ctx.font = "bold 36px system-ui, Arial";
+        const msg = state.over ? state.winnerText : "Paused";
+        ctx.fillText(msg, W / 2, H / 2 - 10);
+
+        ctx.font = "16px system-ui, Arial";
+        ctx.fillText(
+          state.over ? "Tap Restart (or press R)" : "Tap Resume / canvas (or press P)",
+          W / 2,
+          H / 2 + 28
+        );
+      }
+    }
+
+    function loop() {
+      update();
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    resetGame();
+    loop();
+  </script>
+</body>
+</html>
